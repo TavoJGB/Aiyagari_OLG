@@ -1,7 +1,11 @@
-# Based on Le Grand & Ragot
+# Solving OLG version of Aiyagari model with:
+# - Exogenous labour supply
+# - Retirement
+# - Certain lifespan
+# Starting point: codes by Le Grand & Ragot
 
 # Load packages
-#using Debugger
+using BenchmarkTools
 using IterativeSolvers  # powm!
 using LinearAlgebra     # dot
 using Parameters        # @unpack
@@ -9,6 +13,8 @@ using StatsPlots
 using QuantEcon         # rouwenhorst
 using Roots             # findzero
 using SparseArrays      # SparseMatrixCSC
+# using TimerOutputs
+# tmr = TimerOutput()
 
 # Include other files
 include("Funciones.jl");
@@ -19,7 +25,7 @@ include("SS_display.jl");
 # Initialise model
     # eco: model parameters and functions
     # her: tools to solve it (grids, probabilities, state matrix, etc.)
-    eco1, her1 = Model(100, 3, -0.3, 10.0; β=0.97, δ=0.025, α=0.3, ρz=0.9, σz=0.2); # nj=16, γ=1.0001, δ=0.025, nt=5, α=0.36, β=0.999, ρz=0.9, σz=0.2);
+    eco1, her1 = Model(50, 100, 5, -0.3, 10.0; β=0.97, δ=0.025, α=0.3, ρz=0.9, σz=0.2); # nj=16, γ=1.0001, δ=0.025, nt=5, α=0.36, β=0.999, ρz=0.9, σz=0.2);
 
 # Configuration for numerical solution
     cfg1 = Configuracion(0.5; doubBin=true);

@@ -2,23 +2,23 @@
 #### MODEL PARAMETERS                                                 ####
 ##########################################################################
 
-struct Economia{T<:Real, I<:Integer}
+struct Economia{Tr<:Real, Ti<:Integer}
     # Parameters: model
         # Age structure
-        nt::I               # Years per period
-        jGap::I             # Period gap between generations
-        jRet::I             # Retirement period
-        age1::I             # Age in first period
+        nt::Ti               # Years per period
+        jGap::Ti             # Period gap between generations
+        jRet::Ti             # Retirement period
+        age1::Ti             # Age in first period
         # Household
-        γ::T                # CRRA
-        β::T                # Discount factor
-        ρz::T               # Persistence of the idiosyncratic shock
-        σz::T               # Variance of the idiosyncratic shock
+        γ::Tr                # CRRA
+        β::Tr                # Discount factor
+        ρz::Tr               # Persistence of the idiosyncratic shock
+        σz::Tr               # Variance of the idiosyncratic shock
         # Producer
-        α::T                # Share of capital
-        δ::T                # Depreciation rate
+        α::Tr                # Share of capital
+        δ::Tr                # Depreciation rate
         # Markets
-        a_min::T            # Borrowing constraint
+        a_min::Tr            # Borrowing constraint
     
     # Functions: Utility
         u::Function
@@ -27,13 +27,13 @@ struct Economia{T<:Real, I<:Integer}
     end
     
     # CONSTRUCTOR
-    function Economia(a_min::T, nt::I, jGap::I, jRet::I, age1::I,
-        γ::T, β::T, ρz::T, σz::T, α::T, δ::T) where {T<:Real, I<:Integer}
+    function Economia(a_min::Tr, nt::Ti, jGap::Ti, jRet::Ti, age1::Ti,
+        γ::Tr, β::Tr, ρz::Tr, σz::Tr, α::Tr, δ::Tr) where {Tr<:Real, Ti<:Integer}
     
         # Utility functions
-        u  = c::T -> (γ ≈ 1.0) ? log.(c) : (c .^ (one(T) - γ) - one(T)) ./ (one(T) - γ)::T
-        u′ = c::T -> c .^ (-γ)::T
-        inv_u′ = up::T -> up .^ (-one(T) / γ)::T
+        u  = c::Tr -> (γ ≈ 1.0) ? log.(c) : (c .^ (one(Tr) - γ) - one(Tr)) ./ (one(Tr) - γ)::Tr
+        u′ = c::Tr -> c .^ (-γ)::Tr
+        inv_u′ = up::Tr -> up .^ (-one(Tr) / γ)::Tr
     
         # Return the Economy using the natural constructor 
         return Economia(nt, jGap, jRet, age1, γ, β^nt, ρz^nt, σz, α, 1-(1-δ)^nt, a_min, u, u′, inv_u′)
@@ -45,36 +45,37 @@ struct Economia{T<:Real, I<:Integer}
     #### TOOLS                                                            ####
     ##########################################################################
     
-    struct Herramientas{T<:Real, I<:Integer}
+    struct Herramientas{Tr<:Real, Ti<:Integer}
     # Parameters: numerical solution
         # Dimensions
-        n::NamedTuple{(:t,:j,:z,:a,:st,:N,:red), NTuple{7,I}}
+        n::NamedTuple{(:t,:j,:z,:a,:st,:N,:red,:aj), Tuple{Int64,Int64,Int64,Int64,Int64,Int64,Int64,Vector{Ti}}}
         # Capital (log)grid
-        a_max::T                                        # Maximum asset holdings
-        mallaA::Vector{T}                               # Assets grid
+        a_max::Tr                                        # Maximum asset holdings
+        mallaA::Vector{Tr}                               # Assets grid
         # Productivity grid
-        mallaZ::Vector{T}                               # Productivity states
-        Πz::Matrix{T}                                   # Transition matrix
-        Sz::Vector{T}                                   # Productivity long-run distribution
+        mallaZ::Vector{Tr}                               # Productivity states
+        Πz::Matrix{Tr}                                   # Transition matrix
+        Sz::Vector{Tr}                                   # Productivity long-run distribution
         # Life-cycle
-        mallaζ::Vector{T}                               # Life-cycle productivity
+        mallaζ::Vector{Tr}                               # Life-cycle productivity
         # States
-        id::NamedTuple{(:j,:z,:a,:a0), NTuple{4,I}}     # Indexes
-        matSt::Matrix{I}                                # Matrix of states
+        id::NamedTuple{(:j,:z,:a,:a0), NTuple{4,Ti}}     # Indexes
+        matSt::Matrix{Ti}                                # Matrix of states
         # Indicators of state
         ind::NamedTuple{(:newby,:newpt,:wrk,:ret,:last,:Zmax,:Zmin), NTuple{7,BitVector}}
         # Auxiliary (reduced) state pace <- ignoring decision-state variables
-        redQ::SparseMatrixCSC{T,I}                      # Reduced transition matrix
-        redSt::Matrix{I}                                # Reduced matrix of states
+        redQ::SparseMatrixCSC{Tr,Ti}                      # Reduced transition matrix
+        redSt::Matrix{Ti}                                # Reduced matrix of states
     end;
     
     # Constructor
-    function Herramientas(na::I, nz::I, # Nodes in capital and productivity grids
-                          a_max::T,     # Borrowing constraint and upper bound in assets grid
-                          nj::I,        # Number of generations (and last period alive)
-                          curvA::T,     # Curvature of the asset grid
-                          eco::Economia # Model parameters
-                         ) where {T<:Real, I<:Integer}
+    function Herramientas(na_min::Ti, na_max::Ti, # Nodes in asset grid (exact number depends on age)
+                          nz::Ti,                # Nodes in productivity grid
+                          a_max::Tr,             # Upper bound in assets grid (for generation saving most)
+                          nj::Ti,                # Number of generations (and last period alive)
+                          curvA::Tr,             # Curvature of the asset grid
+                          eco::Economia         # Model parameters
+                         ) where {Tr<:Real, Ti<:Integer}
     
     # Unpack relevant variables
         @unpack nt,age1,jGap,jRet,a_min,ρz,σz = eco
@@ -82,14 +83,16 @@ struct Economia{T<:Real, I<:Integer}
     # States
         # Number of states in the model
         nst = 3 # age, productivity, assets
+        # Asset states: depend on age
+        naj = round.(Int64,range(na_max, na_min; length=(jRet-1))[abs.((1:nj) .- (jRet-1)) .+ 1])
         # Total states (n.N)
-        nN  = ( (jRet-1)*nz*na +    # Working-age generations
-                (nj-jRet+1)*na )    # Retired agents
+        nN  = ( nz*sum(naj[1:(jRet-1)]) +   # Working-age generations
+                sum(naj[jRet:end]) )        # Retired agents
     
     # Asset (log)grid
-        aux    = range(0, stop=log(a_max+1-a_min), length=na)
+        aux    = range(0, stop=log(a_max+1-a_min), length=na_max)
         mallaA  = @. exp(aux) - (1-a_min)
-        mallaA = a_min .+ (a_max - a_min) * (range(0.0, 1.0, length=na)) .^ curvA
+        mallaA = a_min .+ (a_max - a_min) * (range(0.0, 1.0, length=na_max)) .^ curvA
         if 0 ∉ mallaA # Ensure that 0 belongs in the grid
             mallaA[findfirst(mallaA.>0)] = 0
         end
@@ -127,19 +130,21 @@ struct Economia{T<:Real, I<:Integer}
     # Indexes
         id  = (j=1, z=2, a=3,
                a0=(i = findfirst(mallaA.==0); isnothing(i) ? 0 : i))
+        @assert id.a0 < na_min
         # 1 = age
         # 2 = idiosyncratic productivity
         # 3 = asset holdings
     
     # Matrix of states
         # Basis
-        matSt           = zeros(I, nj*nz*na, nst)
-        matSt[:,id.j]   = kron( 1:nj, ones(nz*na) )
-        matSt[:,id.z]   = kron( ones(nj), kron( 1:nz, ones(na) ) )
-        matSt[:,id.a]   = kron( ones(nz*nj), 1:na )
+        matSt           = zeros(Ti, nj*nz*na_max, nst)
+        matSt[:,id.j]   = kron( 1:nj, ones(nz*na_max) )
+        matSt[:,id.z]   = kron( ones(nj), kron( 1:nz, ones(na_max) ) )
+        matSt[:,id.a]   = kron( ones(nz*nj), 1:na_max )
         # Corrections
-        # matSt = matSt[(matSt[:,id.j] .> 1) .| (matSt[:,id.a] .== id.a0),:]   # Newcomers start with no assets
-        matSt = matSt[(matSt[:,id.j] .< jRet) .| (matSt[:,id.z] .== 1), :]   # Productivity doesn't matter after retirement
+            # matSt = matSt[(matSt[:,id.j] .> 1) .| (matSt[:,id.a] .== id.a0),:]   # Newcomers start with no assets
+            matSt = matSt[(matSt[:,id.j] .< jRet) .| (matSt[:,id.z] .== 1), :]   # Productivity doesn't matter after retirement
+            matSt = vcat([matSt[(matSt[:,id.a] .<= naj[jj]) .& (matSt[:,id.j] .== jj), :] for jj=1:nj]...)  # Reduce asset grids for generations saving less
         # Verifications
         @assert nN==size(matSt,1)
     
@@ -181,7 +186,7 @@ struct Economia{T<:Real, I<:Integer}
         
     # Tuple of dimensions
         # Named tuple with dimensions
-        n   = (t=nt, j=nj, z=nz, a=na, st=nst, N=nN, red=nred)
+        n   = (t=nt, j=nj, z=nz, a=na_max, st=nst, N=nN, red=nred, aj=naj)
     
     # Return Herramientas
         return Herramientas(n, a_max, mallaA, mallaZ, Πz, Sz, mallaζ, id, matSt, ind, redQ, redSt)
@@ -195,8 +200,9 @@ struct Economia{T<:Real, I<:Integer}
     
     # Function nesting the previous two structures
     function Model(
-        na::I, nz::I,                   # Nodes in capital and productivity grids
-        a_min::T, a_max::T;             # Borrowing constraint and upper bound in assets grid
+        na_min::Ti, na_max::Ti,           # Nodes in asset grid (exact number depends on age)
+        nz::Ti,                          # Nodes in productivity grid
+        a_min::Tr, a_max::Tr;             # Borrowing constraint and upper bound in assets grid
         # Age structure
         nj      = 16,                   # Number of generations (and last period alive)
         nt      = 5,                    # Years per period
@@ -213,12 +219,12 @@ struct Economia{T<:Real, I<:Integer}
         δ       = 0.1,                  # Depreciation rate
         # Numerical solution
         curvA   = 4.0                   # Curvature of the asset grid
-    ) where {T<:Real, I<:Integer}
+    ) where {Tr<:Real, Ti<:Integer}
     
     # Economy (model parameters)
     eco = Economia(a_min, nt, jGap, jRet, age1, γ, β, ρz, σz, α, δ)
     # Tools (grids, probabilities, etc.)
-    her = Herramientas(na, nz, a_max, nj, curvA, eco)
+    her = Herramientas(na_min, na_max, nz, a_max, nj, curvA, eco)
     
     # Construct the structure
     return eco, her
@@ -231,44 +237,44 @@ struct Economia{T<:Real, I<:Integer}
     ##########################################################################
     
     # tolerance and other tools for the computation of the numerical solution
-    struct Configuracion{T<:Real, I<:Integer}
+    struct Configuracion{Tr<:Real, Ti<:Integer}
         # General equilibrium: relaxation, tolerance and maximum iterations
-        rlx_SGE::T              # weight of initial guess in relaxation algorithm
-        tol_SGE::T
-        maxit_SGE::I
+        rlx_SGE::Tr              # weight of initial guess in relaxation algorithm
+        tol_SGE::Tr
+        maxit_SGE::Ti
             # # EGM: tolerance and maximum iterations
-            # tol_EGM::T
-            # maxit_EGM::I
+            # tol_EGM::Tr
+            # maxit_EGM::Ti
         # Golden search
-        tol_GS::T               # tolerance
+        tol_GS::Tr               # tolerance
         # Stationary distribution: tolerance and maximum iterations
-        tol_SSdis::T
-        maxit_SSdis::I
+        tol_SSdis::Tr
+        maxit_SSdis::Ti
         # Final verifications
-        tol_check::T
+        tol_check::Tr
         # Other parameters for the numerical solution
-        c_min::T                # minimum consumption allowed
-        penal::T                # penalty to ensure minimum consumption
+        c_min::Tr                # minimum consumption allowed
+        penal::Tr                # penalty to ensure minimum consumption
         # Graphs
         doubBin::Bool           # groups of two generations
-        plotsiz::Vector{I}      # size for normal plots
-        gridplotsiz::Vector{I}  # size for grids with subplots
+        plotsiz::Vector{Ti}      # size for normal plots
+        gridplotsiz::Vector{Ti}  # size for grids with subplots
     end;
     
     # Constructor
-    function Configuracion(rlx_SGE::T;
-        tol_SGE::T=1e-6, maxit_SGE::I=100,
-        #tol_EGM::T=1e-10, maxit_EGM::I=100000,
-        tol_GS::T=1e-10,
-        tol_SSdis::T=1e-10, maxit_SSdis::I=100000,
-        tol_check::T=1e-5,
-        c_min::T=1e-2, penal::T=-1e6,
+    function Configuracion(rlx_SGE::Tr;
+        tol_SGE::Tr=1e-6, maxit_SGE::Ti=100,
+        #tol_EGM::Tr=1e-10, maxit_EGM::Ti=100000,
+        tol_GS::Tr=1e-10,
+        tol_SSdis::Tr=1e-10, maxit_SSdis::Ti=100000,
+        tol_check::Tr=1e-5,
+        c_min::Tr=1e-2, penal::Tr=-1e6,
         doubBin::Bool=false,
-        plotsiz::Vector{I}=[800,500], gridplotsiz::Vector{I}=[1200,900]
-    ) where {T<:Real,I<:Integer}
+        plotsiz::Vector{Ti}=[800,500], gridplotsiz::Vector{Ti}=[1200,900]
+    ) where {Tr<:Real,Ti<:Integer}
     
     # Construct the structure
-    return Configuracion{T,I}(rlx_SGE, tol_SGE, maxit_SGE, tol_GS, tol_SSdis, maxit_SSdis,
+    return Configuracion{Tr,Ti}(rlx_SGE, tol_SGE, maxit_SGE, tol_GS, tol_SSdis, maxit_SSdis,
                               tol_check, c_min, penal,
                               doubBin, plotsiz, gridplotsiz)
     end;
@@ -278,28 +284,28 @@ struct Economia{T<:Real, I<:Integer}
     #### SOLUTION                                                         ####
     ##########################################################################
     
-    mutable struct Solucion{T<:Real, I<:Integer}
-        r::T                            # interest rate
-        w::T                            # wage rate
-        a_pol::Vector{T}                # policy function for savings on the state space
-        c_pol::Vector{T}                # policy function for consumption on the state space
-        value::Vector{T}                # value function on the state space
-        inc_l::Vector{T}                # households' labour income
-        inc_a::Vector{T}                # households' capital income
-        A_agg::T                        # aggregate savings
-        C_agg::T                        # aggregate consumption
-        K_agg::T                        # aggregate capital
-        L_agg::T                        # aggregate labor supply (in efficient units)
-        Y_agg::T                        # GDP
-        Q_mat::SparseMatrixCSC{T,I}     # Q-transition matrix
-        distr::Vector{T}                # stationary distribution over the states
-        resid::Vector{T}                # Euler equation residuals
+    mutable struct Solucion{Tr<:Real, Ti<:Integer}
+        r::Tr                            # interest rate
+        w::Tr                            # wage rate
+        a_pol::Vector{Tr}                # policy function for savings on the state space
+        c_pol::Vector{Tr}                # policy function for consumption on the state space
+        value::Vector{Tr}                # value function on the state space
+        inc_l::Vector{Tr}                # households' labour income
+        inc_a::Vector{Tr}                # households' capital income
+        A_agg::Tr                        # aggregate savings
+        C_agg::Tr                        # aggregate consumption
+        K_agg::Tr                        # aggregate capital
+        L_agg::Tr                        # aggregate labor supply (in efficient units)
+        Y_agg::Tr                        # GDP
+        Q_mat::SparseMatrixCSC{Tr,Ti}     # Q-transition matrix
+        distr::Vector{Tr}                # stationary distribution over the states
+        resid::Vector{Tr}                # Euler equation residuals
     end;
     
     # Constructor
-    function Solucion(r::T, w::T, eco::Economia, her::Herramientas, a_pol::Vector{T},
-                      c_pol::Vector{T}, value::Vector{T}, Q_mat::SparseMatrixCSC{T,I}, distr::Vector{T}
-                      ) where {T<:Real, I<:Integer}
+    function Solucion(r::Tr, w::Tr, eco::Economia, her::Herramientas, a_pol::Vector{Tr},
+                      c_pol::Vector{Tr}, value::Vector{Tr}, Q_mat::SparseMatrixCSC{Tr,Ti}, distr::Vector{Tr}
+                      ) where {Tr<:Real, Ti<:Integer}
         @unpack α, β, δ, u′ = eco
         @unpack n, mallaA, mallaZ, mallaζ, matSt, id = her
     

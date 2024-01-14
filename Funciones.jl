@@ -18,7 +18,7 @@ function getWeights(x::T, y::Vector{T}; metodo="extrap") where {T<:Real}
             lower = searchsortedlast(y, x)
             #lower is the largest index such that y[lower]≤x (and hence y[lower+1]>x). Returns 0 if x≤y[1]. y sorted.
         # Elements beyond the boundaries of y
-            lower = min(sizY-1, max(1, lower))
+            lower = clamp(lower, 1, sizY-1)
         # Corresponding upper neighbour
             upper = lower+1
     # Computing the weight of the element below
@@ -27,7 +27,7 @@ function getWeights(x::T, y::Vector{T}; metodo="extrap") where {T<:Real}
 
     # Cutting values
     if metodo=="cap"
-        weight = min(1, max(0, weight))
+        weight = clamp(weight, 0, 1)
     end
 
     # returns interpolated value and corresponding index
@@ -51,13 +51,9 @@ function getWeights(x::Vector{T}, y::Vector{T}; metodo="extrap") where {T<:Real}
             upper = similar(lower)
             weight = similar(lower)
         # Find lower elements for each of them
-            for ii = 1:sizX
-                lower[ii] = searchsortedlast(y, x[ii])
-                #lower is the largest index such that y[lower]≤x (and hence y[lower+1]>x). Returns 0 if x≤y[1]. y sorted.
-            end
-        # Elements beyond the boundaries of y
-            replace!(x -> x == 0 ? 1 : x, lower)
-            replace!(x -> x == sizY ? sizY-1 : x, lower)
+            lower = clamp.(searchsortedlast.(Ref(y), x), 1, sizY-1)
+            # lower is the largest index such that y[lower]≤x (and hence y[lower+1]>x). Returns 1 if x≤y[1] and sizY-1 if x≥y[end-1].
+            # y must be sorted.
         # Corresponding upper neighbour
             upper = lower.+1
     # Computing the weight of the element below
@@ -66,8 +62,7 @@ function getWeights(x::Vector{T}, y::Vector{T}; metodo="extrap") where {T<:Real}
 
     # Cutting values
     if metodo=="cap"
-        replace!(x -> x > 1 ? 1 : x, weight)
-        replace!(x -> x < 0 ? 0 : x, weight)
+        weight = clamp.(weight, 0, 1)
     end
 
     # returns interpolated value and corresponding index
@@ -161,4 +156,25 @@ function get_quants(nq::I, data::Vector{T}, distr::Vector{T}, top::I) where {T<:
     sharetop = 1-interpLinear(1-top/100, cumdistr[1:iLast], cumSh[1:iLast]; metodo="cap")
 
     return quants, sharetop
+end
+
+
+
+##########################################################################
+#### QUANTILES                                                        ####
+##########################################################################
+
+function tiled_graph(plots::Vector{Plots.Plot}; tit::String="")
+    # Auxiliary: number of plots
+    np = size(plots,1)
+    # Display them in tiled layout
+    tiledplot = Plots.plot(
+        # Global title: workaround to show global title (empty plot with annotation)
+        Plots.scatter(ones(3), marker=0,markeralpha=0, annotations=(2, 1.0, Plots.text(tit)),axis=false, grid=false, leg=false,size=(200,100)),
+        # Grid of policy functions
+        Plots.plot(plots..., layout = np),
+        # Layout of title and policy functions
+        layout=grid(2,1,heights=[0.1,0.9])
+    )
+    return tiledplot
 end

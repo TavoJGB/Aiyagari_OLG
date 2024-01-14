@@ -3,31 +3,43 @@
 ##########################################################################
 
 # Summary table
-function SS_summary(conv::T, eco::Economia, her::Herramientas, sol::Solucion) where {T<:Real}
-    @unpack β, α, δ, u′, a_min = eco
-    @unpack n, mallaA, mallaZ, matSt, id = her
-    @unpack a_pol, c_pol, r, w, A_agg, C_agg, K_agg, Y_agg, distr, resid = sol
+function SS_summary(conv::Tr, eco::Economia, her::Herramientas, sol::Solucion) where {Tr<:Real}
+    @unpack β, α, δ, u′, a_min = eco;
+    @unpack n, mallaA, mallaZ, matSt, id = her;
+    @unpack a_pol, c_pol, r, w, A_agg, C_agg, K_agg, Y_agg, distr, resid = sol;
 
     # Computing MPC
-        # Auxiliary variables
-        distr_2d = Array{Float64}(undef, n.a, Int64(n.N/n.a))
-        cpol_2d = similar(distr_2d)
-        distr_2d .= reshape(distr,n.a,:)
-        cpol_2d .= reshape(c_pol,n.a,:)
-        # First differences
-        diff_cpol = cpol_2d[2:end,:] - cpol_2d[1:end-1,:]
-        diff_apol = (mallaA[2:end] - mallaA[1:end-1])*conv
+        # Initialise variable
+        sizmpc = sum(matSt[:,id.j] .!= 1)
+        mpc = similar(a_pol)
+        # Compute it for all agents in one generation
+        for jj=1:n.j
+            # Auxiliary variables
+            indJ = (matSt[:,id.j] .== jj)   # indicator
+            sizJ = sum(indJ)                # size of generation
+            naJ = n.aj[jj]                  # number of asset nodes in generation
+            # Auxiliary variables
+            distr_2d = Array{Float64}(undef, naJ, Int64(sizJ/naJ))
+            cpol_2d = similar(distr_2d)
+            distr_2d .= reshape(distr[indJ], naJ, :)
+            cpol_2d .= reshape(c_pol[indJ], naJ, :)
+            # First differences
+            diff_cpol = cpol_2d[2:end,:] - cpol_2d[1:end-1,:]
+            diff_apol = (mallaA[1:naJ][2:end] - mallaA[1:naJ][1:end-1])*conv
+            # Compute MPC
+            mpc[indJ] = reshape([diff_cpol ./ diff_apol; zeros(Tr, 1, size(diff_cpol,2))], sizJ)
+        end
         # Compute average MPC
-        mpc = sum(diff_cpol .* distr_2d[1:end-1, :] ./ diff_apol)
+        mpc_mean = sum(mpc .* distr)
 
     return Dict{String,Float64}(
         "01. Annual interest rate" => r,
         "02. Gini" => Gini(a_pol, distr),
         "03. Aggregate consumption-to-GDP, C/Y" => (C_agg / Y_agg),
         "04. Capital-to-GDP, K/Y" => (K_agg / Y_agg),
-        "05. Investment-to-GDP, I/Y" => (δ * K_agg / Y_agg),
-        "06. Average MPC" => mpc,
-        "07. Share of credit-constrained agents" => sum(distr_2d[1,:]))
+        "05. Investment-to-GDP, Ti/Y" => (δ * K_agg / Y_agg),
+        "06. Average MPC" => mpc_mean,
+        "07. Share of credit-constrained agents" => sum(distr[matSt[:,id.a].==1]))
 
 end;
 
@@ -53,44 +65,54 @@ end;
 #### GRAPHS                                                           ####
 ##########################################################################
 
-function generations_gridplot(nj::I, age1::I, xs::Vector{T}, ys::Vector{T},
+function generations_gridplot(nj::Ti, age1::Ti, xs::Vector{Tr}, ys::Vector{Tr},
                               her::Herramientas;
-                              tit::String="",
                               xlab::String="", ylab::String="",
-                              sumOne::Bool=false) where {T<:Real, I<:Integer}
+                              sumOne::Bool=false, sizeAdj::String="none") where {Tr<:Real, Ti<:Integer}
     @unpack matSt, id, ind, n = her
+    # Options
+    #   - sumOne: to normalise the vector y so that it sums one.
+    #   - sizeAdj: if the ys vector changes size depending on the generation, we need one of the following:
+    #       case "x": to ignore some xs
+    #       case "y": to replace the missing ys with 0s
+    #       case "none": do nothing, but it will lead to an error if there are variations in size
     # Initialise relevant variables
     plots = Array{Plots.Plot}(undef, nj)
+    # Auxiliary variable
+    sizX = length(xs)
     # Create plots
     for jj=1:nj
         indJ = (matSt[:,id.j] .== jj)
-        y_jj = [ys[indJ .& ind.Zmax] ys[indJ .& ind.Zmin]]
+        y_aux = [ys[indJ .& ind.Zmax] ys[indJ .& ind.Zmin]]
+        sizY = size(y_aux,1)    # auxiliary variable
         if sumOne
-            y_jj ./= sum(y_jj, dims=1)
+            y_aux ./= sum(y_aux, dims=1)
         end
-        plots[jj] = plot( xs, y_jj[:,1], label="high z")
-                    plot!(xs, y_jj[:,2], label="low z")
+        # Size adjustment
+            if sizeAdj=="x"
+                x_jj = xs[1:n.aj[jj]]
+            else
+                x_jj = xs
+            end
+            if (sizeAdj=="y") & (sizY < sizX)
+                y_jj = [y_aux; zeros(sizX-sizY,2)]
+            else
+                y_jj = y_aux
+            end
+        plots[jj] = plot( x_jj, y_jj[:,1], label="high z")
+                    plot!(x_jj, y_jj[:,2], label="low z")
                     xlabel!(xlab)
                     ylabel!(ylab)
                     title!(string("Age: ", age1 + (jj-1)*n.t, "-", age1 + jj*n.t - 1))
     end
-    # Display them in tiled layout
-    genplots = Plots.plot(
-        # Global title: workaround to show global title (empty plot with annotation)
-        Plots.scatter(ones(3), marker=0,markeralpha=0, annotations=(2, 1.0, Plots.text(tit)),axis=false, grid=false, leg=false,size=(200,100)),
-        # Grid of policy functions
-        Plots.plot(plots..., layout = nj),
-        # Layout of title and policy functions
-        layout=grid(2,1,heights=[0.1,0.9])
-    )
-    return genplots
+    return plots
 end
 
-function groups_gridplot(groupnames::Array{String}, groupvals::Array{Vector{I}}, varid::I,
-    xs::Vector{T}, ys::Vector{T},
+function groups_gridplot(groupnames::Array{String}, groupvals::Array{Vector{Ti}}, varid::Ti,
+    xs::Vector{Tr}, ys::Vector{Tr},
     her::Herramientas;
     tit::String="", xlab::String="", ylab::String="",
-    sumOne::Bool=false) where {T<:Real, I<:Integer}
+    sumOne::Bool=false) where {Tr<:Real, Ti<:Integer}
 
     @unpack matSt, id, ind, n = her
 
@@ -140,8 +162,8 @@ function group_distrplot(groupnames, groupinds, matSt, varid, xs, ys, func)
 end
 
 
-function SS_graphs(conv::T, eco::Economia, her::Herramientas,
-    sol::Solucion, cfg::Configuracion)::Nothing where {T<:Real}
+function SS_graphs(conv::Tr, eco::Economia, her::Herramientas,
+    sol::Solucion, cfg::Configuracion)::Nothing where {Tr<:Real}
     @unpack age1, jRet = eco;
     @unpack n, matSt, mallaA, mallaζ, mallaZ, id, ind = her;
     @unpack r, w, c_pol, a_pol, value, inc_l, inc_a, distr = sol;
@@ -166,7 +188,7 @@ function SS_graphs(conv::T, eco::Economia, her::Herramientas,
 
 # CONSUMPTION I - policy functions
     # Main
-    generations_gridplot(jRet-1, age1, conv/1000*mallaA, c_pol/1000, her, tit="Policy functions: consumption (×10³ €)", xlab="asset holdings (×10³ €)", ylab="consumption (×10³ €)")
+    tiled_graph(generations_gridplot(jRet-1, age1, conv/1000*mallaA, c_pol/1000, her, xlab="asset holdings (×10³ €)", ylab="consumption (×10³ €)", sizeAdj="x"); tit="Policy functions: consumption (×10³ €)")
     # Other settings
     plot!(size=gridplotsiz)
     # Save graph
@@ -188,7 +210,7 @@ function SS_graphs(conv::T, eco::Economia, her::Herramientas,
 
 # SAVINGS I - policy functions
     # Main
-    generations_gridplot(jRet-1, age1, conv/1000*mallaA, a_pol/1000, her; tit="Policy functions: savings (×10³ €)", xlab="asset holdings (×10³ €)", ylab="savings (×10³ €)")
+    tiled_graph(generations_gridplot(jRet-1, age1, conv/1000*mallaA, a_pol/1000, her; xlab="asset holdings (×10³ €)", ylab="savings (×10³ €)", sizeAdj="x"); tit="Policy functions: savings (×10³ €)")
     # Other settings
     plot!(size=gridplotsiz)
     # Save graph
@@ -211,7 +233,13 @@ function SS_graphs(conv::T, eco::Economia, her::Herramientas,
 
 # ASSET DISTRIBUTION I - by productivity group
     # Main
-    generations_gridplot(jRet-1, age1, conv/1000*mallaA, distr, her; tit="Wealth distribution\nby age group", xlab="asset holdings (×10³ €)", sumOne=true)
+    a_dist_plots = generations_gridplot(jRet-1, age1, conv/1000*mallaA, distr, her; xlab="asset holdings (×10³ €)", sumOne=true, sizeAdj="y")
+    # Add vertical line marking the end of the asset grid for each generation
+    for (jj,pp) in zip((1:(jRet-1)), a_dist_plots)
+        Plots.vline!(pp, [conv*mallaA[n.aj[jj]]/1000], linecolor=:gray, label="grid limit")  # Replace `x_value` with the x-coordinate of the vertical line
+    end
+    # Plot them
+    tiled_graph(a_dist_plots; tit="Wealth distribution\nby age group")
     # Other settings
     plot!(size=gridplotsiz)
     # Save graph
@@ -248,7 +276,7 @@ function SS_graphs(conv::T, eco::Economia, her::Herramientas,
 
 # VALUE - by age groups
     # Main
-    generations_gridplot(jRet-1, age1, conv/1000*mallaA, value, her; tit="Value functions", xlab="asset holdings (×10³ €)")
+    tiled_graph(generations_gridplot(jRet-1, age1, conv/1000*mallaA, value, her; xlab="asset holdings (×10³ €)", sizeAdj="x"); tit="Value functions")
     # Other settings
     plot!(size=gridplotsiz)
     # Save graph
@@ -264,7 +292,7 @@ end
 #### TABLES                                                           ####
 ##########################################################################
 
-function SS_tables(her::Herramientas, sol::Solucion; nquants::I=5, top::I=10)  where {I<:Integer}
+function SS_tables(her::Herramientas, sol::Solucion; nquants::Ti=5, top::Ti=10)  where {Ti<:Integer}
     @unpack mallaA, matSt, id, ind = her
     @unpack inc_l, distr = sol
 
