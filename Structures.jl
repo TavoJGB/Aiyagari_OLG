@@ -170,17 +170,17 @@ struct Economia{Tr<:Real, Ti<:Integer}
             # Initialise matrix
             redQ = spzeros(Float64,nN,nred)
             # Age
-            redQ .= ((matSt[:,id.j].+1).==jNext);
+            redQ .= ((matSt[:,id.j].+1).==jNext)
             # Productivity
-            auxTr_Z = spzeros(Float64,nN,nred);
+            auxTr_Z = spzeros(Float64,nN,nred)
             for col=1:nred
-                auxTr_Z[matSt[:,id.j].<(jRet-1),col] .= Πz[matSt[matSt[:,id.j].<(jRet-1),id.z], zNext[col]];
+                auxTr_Z[matSt[:,id.j].<(jRet-1),col] .= Πz[matSt[matSt[:,id.j].<(jRet-1),id.z], zNext[col]]
                 # Correction: productivity does not change since retirement
-                auxTr_Z[matSt[:,id.j].>=(jRet-1),col] .= 1;
+                auxTr_Z[matSt[:,id.j].>=(jRet-1),col] .= 1
             end
-            redQ = redQ .* auxTr_Z;
+            redQ = redQ .* auxTr_Z
             # New generation enters when parents leave period jGap (ind.newpt)
-            redQ[ind.newpt, redSt[:,id.j].==1] .+= Sz';
+            redQ[ind.newpt, redSt[:,id.j].==1] .+= Sz'
             # Verification
             @assert all(sum(redQ,dims=2) .≈ 1.0 .+ ind.newpt - ind.last)
         
@@ -200,9 +200,9 @@ struct Economia{Tr<:Real, Ti<:Integer}
     
     # Function nesting the previous two structures
     function Model(
-        na_min::Ti, na_max::Ti,           # Nodes in asset grid (exact number depends on age)
-        nz::Ti,                          # Nodes in productivity grid
-        a_min::Tr, a_max::Tr;             # Borrowing constraint and upper bound in assets grid
+        na_min::Ti, na_max::Ti,         # Nodes in asset grid (exact number depends on age)
+        nz::Ti,                         # Nodes in productivity grid
+        a_min::Tr, a_max::Tr;           # Borrowing constraint and upper bound in assets grid
         # Age structure
         nj      = 16,                   # Number of generations (and last period alive)
         nt      = 5,                    # Years per period
@@ -221,13 +221,13 @@ struct Economia{Tr<:Real, Ti<:Integer}
         curvA   = 4.0                   # Curvature of the asset grid
     ) where {Tr<:Real, Ti<:Integer}
     
-    # Economy (model parameters)
-    eco = Economia(a_min, nt, jGap, jRet, age1, γ, β, ρz, σz, α, δ)
-    # Tools (grids, probabilities, etc.)
-    her = Herramientas(na_min, na_max, nz, a_max, nj, curvA, eco)
-    
-    # Construct the structure
-    return eco, her
+        # Economy (model parameters)
+        eco = Economia(a_min, nt, jGap, jRet, age1, γ, β, ρz, σz, α, δ)
+        # Tools (grids, probabilities, etc.)
+        her = Herramientas(na_min, na_max, nz, a_max, nj, curvA, eco)
+        
+        # Construct the structure
+        return eco, her
     end;
     
     

@@ -399,7 +399,7 @@ function check_solution(eco::Economia, her::Herramientas, sol::Solucion,
     jDistr = vcat([sum(distr[jj .∈ matSt[:,id.j],:], dims=1) for jj in 1:n.j]...)
         # Auxiliary variables
         auxMass = jDistr[1]         # mass of agents by age (before death risk)
-    if !any(auxMass .≈ jDistr)
+    if !all(auxMass .≈ jDistr)
         println("error in survival probabilities")
         return false
     end
