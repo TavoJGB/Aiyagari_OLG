@@ -37,7 +37,7 @@ function SS_summary(conv::Tr, eco::Economia, her::Herramientas, sol::Solucion) w
         "02. Gini" => Gini(a_pol, distr),
         "03. Aggregate consumption-to-GDP, C/Y" => (C_agg / Y_agg),
         "04. Capital-to-GDP, K/Y" => (K_agg / Y_agg),
-        "05. Investment-to-GDP, Ti/Y" => (δ * K_agg / Y_agg),
+        "05. Investment-to-GDP, Ti/Y" => ((δ * K_agg / n.t) / Y_agg),
         "06. Average MPC" => mpc_mean,
         "07. Share of credit-constrained agents" => sum(distr[matSt[:,id.a].==1]))
 
