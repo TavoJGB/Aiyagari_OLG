@@ -290,6 +290,7 @@ struct Economia{Tr<:Real, Ti<:Integer}
         a_pol::Vector{Tr}                # policy function for savings on the state space
         c_pol::Vector{Tr}                # policy function for consumption on the state space
         value::Vector{Tr}                # value function on the state space
+        apos_L::Vector{Ti}               # lower position of a_pol in assets grid
         inc_l::Vector{Tr}                # households' labour income
         inc_a::Vector{Tr}                # households' capital income
         A_agg::Tr                        # aggregate savings
@@ -304,8 +305,9 @@ struct Economia{Tr<:Real, Ti<:Integer}
     
     # Constructor
     function Solucion(r::Tr, w::Tr, eco::Economia, her::Herramientas, a_pol::Vector{Tr},
-                      c_pol::Vector{Tr}, value::Vector{Tr}, Q_mat::SparseMatrixCSC{Tr,Ti}, distr::Vector{Tr}
-                      ) where {Tr<:Real, Ti<:Integer}
+                      c_pol::Vector{Tr}, value::Vector{Tr}, apos_L::Vector{Ti},
+                      Q_mat::SparseMatrixCSC{Tr,Ti}, distr::Vector{Tr}
+                     ) where {Tr<:Real, Ti<:Integer}
         @unpack α, β, δ, u′ = eco
         @unpack n, mallaA, mallaZ, mallaζ, matSt, id = her
     
@@ -326,5 +328,5 @@ struct Economia{Tr<:Real, Ti<:Integer}
         resid = u′.(c_pol) - β * (1+r) * Q_mat' * u′.(c_pol)
     
         # Construct the structure
-        return Solucion(r, w, a_pol, c_pol, value, inc_l, inc_a, A_agg, C_agg, K_agg, L_agg, Y_agg, Q_mat, distr, resid)
+        return Solucion(r, w, a_pol, c_pol, value, apos_L, inc_l, inc_a, A_agg, C_agg, K_agg, L_agg, Y_agg, Q_mat, distr, resid)
     end;

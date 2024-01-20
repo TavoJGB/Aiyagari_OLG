@@ -58,17 +58,19 @@ function golden_policies(coh::Vector{Tr}, c_min::Vector{Tr}, c_max::Vector{Tr}, 
             iHigh = v1 .> v2
             iChange = (iHigh .& iGS)
             # c2 is the new upper bound
-            c2[iChange] = c1[iChange]
-            v2[iChange] = v1[iChange]
+            c2[iChange]     = c1[iChange]
+            a2[iChange]     = a1[iChange]
+            v2[iChange]     = v1[iChange]
+            indL2[iChange]  = indL1[iChange]
             # Update lower bound
             c1[iChange] = c1[iChange]-d[iChange]
             u1[iChange] = u.(c1[iChange])               # current utility
             a1[iChange] = coh[iChange] - c1[iChange]    # savings
             # Interpolate expected continuation value
             indAux = (1:siz)[findall(iChange)]
-            indL1, indU1, wgt1 = getWeights(a1[iChange], mallaA)
+            indL1[iChange], indU1, wgt1 = getWeights(a1[iChange], mallaA)
             ev1[iChange] = ((one(Tr) .- wgt1) .* expV[indAux + (indU1 .- 1)*siz]
-                                     + wgt1  .* expV[indAux + (indL1 .- 1)*siz])
+                                      + wgt1  .* expV[indAux + (indL1[iChange] .- 1)*siz])
             # Value of first guess
             v1[iChange] = u1[iChange] + ev1[iChange]
     
@@ -77,18 +79,19 @@ function golden_policies(coh::Vector{Tr}, c_min::Vector{Tr}, c_max::Vector{Tr}, 
             iHigh = .!iHigh
             iChange = iHigh .& iGS
             # c1 is the new lower bound
-            c1[iChange] = c2[iChange]
-            a1[iChange] = a2[iChange]
-            v1[iChange] = v2[iChange]
+            c1[iChange]     = c2[iChange]
+            a1[iChange]     = a2[iChange]
+            v1[iChange]     = v2[iChange]
+            indL1[iChange]  = indL2[iChange]
             # Update upper bound
             c2[iChange] = c2[iChange] + d[iChange]
             u2[iChange] = u.(c2[iChange])               # current utility
             a2[iChange] = coh[iChange] - c2[iChange]    # savings
             # Interpolate expected continuation value
             indAux = (1:siz)[findall(iChange)]
-            indL2, indU2, wgt2 = getWeights(a2[iChange], mallaA)
+            indL2[iChange], indU2, wgt2 = getWeights(a2[iChange], mallaA)
             ev2[iChange] = ((one(Tr) .- wgt2) .* expV[indAux + (indU2 .- 1)*siz]
-                                     + wgt2  .* expV[indAux + (indL2 .- 1)*siz])
+                                     + wgt2  .* expV[indAux + (indL2[iChange] .- 1)*siz])
             # Value of the second guess
             v2[iChange] = u2[iChange] + ev2[iChange]
 
@@ -100,11 +103,12 @@ function golden_policies(coh::Vector{Tr}, c_min::Vector{Tr}, c_max::Vector{Tr}, 
     
     # Return the larger of the two
     iHigh = v2.>v1
-    c1[iHigh] = c2[iHigh]
-    a1[iHigh] = a2[iHigh]
-    v1[iHigh] = v2[iHigh]
-    
-    return c1, a1, v1
+    c1[iHigh]       = c2[iHigh]
+    a1[iHigh]       = a2[iHigh]
+    v1[iHigh]       = v2[iHigh]
+    indL1[iHigh]    = indL2[iHigh]
+
+    return c1, a1, v1, indL1
     
 end
 
@@ -164,10 +168,15 @@ function hh_solve!(eco::Economia, her::Herramientas, sol::Solucion, cfg::Configu
     @unpack r, w, inc_l, inc_a = sol;
     @unpack tol_GS, c_min, penal = cfg;
 
+    # Types
+    Tr = typeof(r)
+    Ti = typeof(n.j)
+
     # Initialise variables
-    a_GS = Array{Float64}(undef, n.N)
-    c_GS = similar(a_GS)
-    v_GS = similar(a_GS)
+    a_GS = Array{Tr}(undef, n.N)    # golden search savings policy function
+    c_GS = similar(a_GS)            # golden search consumption policy function
+    v_GS = similar(a_GS)            # golden search value function
+    apos_GS = Array{Ti}(undef, n.N) # lower position of a_GS in assets grid
     
     # Cash on hand
     coh = inc_l + inc_a + mallaA[matSt[:,id.a]]
@@ -180,6 +189,7 @@ function hh_solve!(eco::Economia, her::Herramientas, sol::Solucion, cfg::Configu
         replace!(c -> c < c_min ? c_min : c, c_GS)
         v_GS[ind.last] .= u.(c_GS[ind.last])
         v_GS[ind.last .& indCmin] .= penal
+        apos_GS[ind.last] .= id.a0
 
     # Other generations
     for jj=range(; start=n.j-1, stop=1, step=-1)
@@ -208,15 +218,16 @@ function hh_solve!(eco::Economia, her::Herramientas, sol::Solucion, cfg::Configu
             cmax_GS = max.(c_min, coh[indJ] .- a_min)
             cmin_GS = max.(c_min, coh[indJ] .- mallaA[n.aj[jj+1]])
             # Optimisation
-            c_GS[indJ], a_GS[indJ], v_GS[indJ] = golden_policies(coh[indJ], cmin_GS, cmax_GS, expV, tol_GS, u, mallaA[1:n.aj[jj+1]])
+            c_GS[indJ], a_GS[indJ], v_GS[indJ], apos_GS[indJ] = golden_policies(coh[indJ], cmin_GS, cmax_GS, expV, tol_GS, u, mallaA[1:n.aj[jj+1]])
     end
     
     println("Done with Golden search.")
 
     # Update solution
-    sol.a_pol .= a_GS
-    sol.c_pol .= c_GS
-    sol.value .= v_GS
+    sol.a_pol  .= a_GS
+    sol.c_pol  .= c_GS
+    sol.value  .= v_GS
+    sol.apos_L .= apos_GS
 
     return nothing
 end
@@ -227,32 +238,45 @@ end
 #### Q-TRANSITION MATRIX                                              ####
 ##########################################################################
 
-function transitionMat(a_pol::Vector{Tr}, her::Herramientas{Tr,Ti}
-    )::SparseMatrixCSC{Tr,Ti} where {Tr<:Real,Ti<:Integer}
+function transitionMat(a_pol::Vector{Tr}, apos_L::Vector{Ti}, as::Vector{Tr},
+    st_a::Vector{Ti}, st_j::Vector{Ti}, redQ::SparseMatrixCSC{Tr,Ti},
+    redst_j::Vector{Ti}, nj::Ti)::SparseMatrixCSC{Tr,Ti} where {Tr<:Real,Ti<:Integer}
     
-    @unpack n, mallaA, redQ, redSt, matSt, id, ind, Sz = her;
+    # Auxiliary variables
+    na = size(as,1)     # number of points in grid for decision variable
+    nN = size(redQ,1)   # number of states
 
     # Initialise variable
-    Q_mat = spzeros(Tr,Ti,n.N,n.N)
+    trans = spzeros(Tr,Ti,nN,nN)
 
     # Position in assets grid
-    auxL, auxU, auxW = getWeights(a_pol, mallaA; metodo="cap")
+    apos_U = apos_L .+ 1
+    wgt = (as[apos_U] - a_pol) ./ (as[apos_U] - as[apos_L])
     
     # Savings in next period
-    anext = spzeros(Tr,Ti,n.a,n.N)    # Initialise variable
-    anext[auxL + ((1:n.N) .- 1)*n.a] .= auxW
-    anext[auxU + ((1:n.N) .- 1)*n.a] .= (1.0 .- auxW)
+    anext = spzeros(Tr,Ti,na,nN)    # Initialise variable
+    anext[apos_L + ((1:nN) .- 1)*na] .= wgt
+    anext[apos_U + ((1:nN) .- 1)*na] .= (1.0 .- wgt)
 
     # Generations with survival possibilities
-    for st = findall(matSt[:,id.j].<n.j)
-        jj = matSt[st,id.j]
-        rowsL = (matSt[:,id.a].==auxL[st]) .& (matSt[:,id.j].==jj+1)
-        rowsU = (matSt[:,id.a].==auxU[st]) .& (matSt[:,id.j].==jj+1)
-        Q_mat[rowsL, st] .= redQ[st, redSt[:,id.j].==(jj+1)] * auxW[st]
-        Q_mat[rowsU, st] .= redQ[st, redSt[:,id.j].==(jj+1)] * (one(Tr) - auxW[st])
+    for st = findall(st_j.<nj)
+        jj = st_j[st]
+        rowsL = (st_a.==apos_L[st]) .& (st_j.==jj+1)
+        rowsU = (st_a.==apos_U[st]) .& (st_j.==jj+1)
+        trans[rowsL, st] .= redQ[st, redst_j.==(jj+1)] * wgt[st]
+        trans[rowsU, st] .= redQ[st, redst_j.==(jj+1)] * (one(Tr) - wgt[st])
     end
+    return trans
+end
 
-    # New generation
+function Q_matrix(sol::Solucion, her::Herramientas)::SparseMatrixCSC
+    @unpack a_pol, apos_L = sol
+    @unpack n, mallaA, matSt, id, ind, redQ, redSt = her
+    
+    # Compute transition matrix
+    Q_mat = transitionMat(a_pol, apos_L, mallaA, matSt[:,id.a], matSt[:,id.j], redQ, redSt[:,id.j], n.j)
+
+    # Correction: new generation
     Q_mat[ind.newby, ind.newpt] .= 0
     Q_mat[ind.newby .& (matSt[:,id.a].==id.a0), ind.newpt] .= redQ[ind.newpt,redSt[:,id.j].==1]'
 
@@ -326,7 +350,7 @@ function steady(eco::Economia, her::Herramientas, cfg::Configuracion;
     c_pol = max.(c_min, r_0*mallaA[matSt[:,id.a]] .+ w_0*mallaZ[matSt[:,id.z]])
 
     # We initialize the solution
-    sol = Solucion(r_0, w_0, eco, her, a_pol, c_pol, similar(c_pol), spzeros(Tr, Int64, n.N, n.N), fill(one(Tr)/n.N, n.N));
+    sol = Solucion(r_0, w_0, eco, her, a_pol, c_pol, similar(c_pol), matSt[:,id.a], spzeros(Tr, Int64, n.N, n.N), fill(one(Tr)/n.N, n.N));
 
     # Start of the dichotomy
     for kR = 1:maxit_SGE
@@ -337,12 +361,12 @@ function steady(eco::Economia, her::Herramientas, cfg::Configuracion;
         # Policy functions (Golden)
         hh_solve!(eco, her, sol, cfg)
         # Q-matrix
-        @unpack a_pol, c_pol, value = sol;
-        Q_mat = transitionMat(a_pol, her)
+        Q_mat = Q_matrix(sol, her)
         # Measure
         distr = dist(Q_mat, cfg.tol_SSdis, eco, her)
         # Aggregate quantities
-        sol = Solucion(r_0, w_0, eco, her, a_pol, c_pol, value, Q_mat, distr)
+        @unpack a_pol, c_pol, value, apos_L = sol;
+        sol = Solucion(r_0, w_0, eco, her, a_pol, c_pol, value, apos_L, Q_mat, distr)
         @unpack A_agg, K_agg, L_agg = sol
 
         # If it converged
@@ -439,7 +463,7 @@ end;
 function SS_annual(eco::Economia, her::Herramientas, sol::Solucion)
     nt = her.n.t
     # Initialise annualised structure
-    sol_annual = Solucion(sol.r, sol.w, eco, her, copy(sol.a_pol), copy(sol.c_pol), copy(sol.value), copy(sol.Q_mat), copy(sol.distr));
+    sol_annual = Solucion(sol.r, sol.w, eco, her, copy(sol.a_pol), copy(sol.c_pol), copy(sol.value), copy(sol.apos_L), copy(sol.Q_mat), copy(sol.distr));
     # Annualise flow variables
     sol_annual.c_pol .= sol.c_pol/nt
     sol_annual.inc_l .= sol.inc_l/nt

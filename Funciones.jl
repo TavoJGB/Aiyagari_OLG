@@ -57,7 +57,7 @@ function getWeights(x::Vector{T}, y::Vector{T}; metodo="extrap") where {T<:Real}
         # Corresponding upper neighbour
             upper = lower.+1
     # Computing the weight of the element below
-        weight = (y[upper] .- x) ./ (y[upper] .- y[lower])
+        weight = (y[upper] - x) ./ (y[upper] - y[lower])
         # the weight for the upper element is (1 - weight)
 
     # Cutting values
