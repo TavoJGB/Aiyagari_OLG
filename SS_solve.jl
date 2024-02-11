@@ -238,33 +238,33 @@ end
 #### Q-TRANSITION MATRIX                                              ####
 ##########################################################################
 
-function transitionMat(a_pol::Vector{Tr}, apos_L::Vector{Ti}, as::Vector{Tr},
-    st_a::Vector{Ti}, st_j::Vector{Ti}, redQ::SparseMatrixCSC{Tr,Ti},
-    redst_j::Vector{Ti}, nj::Ti)::SparseMatrixCSC{Tr,Ti} where {Tr<:Real,Ti<:Integer}
+function transitionMat( a_pol::Vector{Tr}, apos_L::Vector{Ti}, as::Vector{Tr},
+    st_a::Vector{Ti}, st_j::Vector{Ti}, redtrans::SparseMatrixCSC{Tr,Ti},
+    redst_j::Vector{Ti}; jmax::Ti=maximum(st_j)
+  )::SparseMatrixCSC{Tr,Ti} where {Tr<:Real,Ti<:Integer}
     
     # Auxiliary variables
     na = size(as,1)     # number of points in grid for decision variable
-    nN = size(redQ,1)   # number of states
+    nN = size(redtrans,1)   # number of states
 
     # Initialise variable
     trans = spzeros(Tr,Ti,nN,nN)
 
     # Position in assets grid
-    apos_U = apos_L .+ 1
-    wgt = (as[apos_U] - a_pol) ./ (as[apos_U] - as[apos_L])
+    apos_U, wgt = getWeights(a_pol, as, apos_L; metodo="cap")
     
     # Savings in next period
     anext = spzeros(Tr,Ti,na,nN)    # Initialise variable
     anext[apos_L + ((1:nN) .- 1)*na] .= wgt
     anext[apos_U + ((1:nN) .- 1)*na] .= (1.0 .- wgt)
 
-    # Generations with survival possibilities
-    for st = findall(st_j.<nj)
+    # Complete the matrix generation by generation
+    for st = findall(st_j.<jmax)
         jj = st_j[st]
         rowsL = (st_a.==apos_L[st]) .& (st_j.==jj+1)
         rowsU = (st_a.==apos_U[st]) .& (st_j.==jj+1)
-        trans[rowsL, st] .= redQ[st, redst_j.==(jj+1)] * wgt[st]
-        trans[rowsU, st] .= redQ[st, redst_j.==(jj+1)] * (one(Tr) - wgt[st])
+        trans[rowsL, st] .= redtrans[st, redst_j.==(jj+1)] * wgt[st]
+        trans[rowsU, st] .= redtrans[st, redst_j.==(jj+1)] * (one(Tr) - wgt[st])
     end
     return trans
 end
@@ -274,7 +274,7 @@ function Q_matrix(sol::Solucion, her::Herramientas)::SparseMatrixCSC
     @unpack n, mallaA, matSt, id, ind, redQ, redSt = her
     
     # Compute transition matrix
-    Q_mat = transitionMat(a_pol, apos_L, mallaA, matSt[:,id.a], matSt[:,id.j], redQ, redSt[:,id.j], n.j)
+    Q_mat = transitionMat(a_pol, apos_L, mallaA, matSt[:,id.a], matSt[:,id.j], redQ, redSt[:,id.j])
 
     # Correction: new generation
     Q_mat[ind.newby, ind.newpt] .= 0
@@ -291,6 +291,35 @@ end;
 #### STATIONARY DISTRIBUTION                                          ####
 ##########################################################################
 
+# Initialise distribution
+# Guess, consistent with long-run distribtion of age and productivity
+function guessDist(jRet::Ti,her::Herramientas{Tr,Ti})::Vector{Tr} where {Tr<:Real, Ti<:Integer}
+    @unpack matSt, id, n, Sz, ind = her;
+    # Initialise distribution
+    distr = Vector{Tr}(undef,n.N)
+    # Mass of agents in each age group:
+        # Mass of agents by age
+        jMass = fill(1/n.j, n.j)
+    # Mass of agents in each productivity group:
+        zMass = Sz'
+    # Iterate over groups of individuals with same age and productivity
+    for jj=1:(jRet-1), zz=1:n.z
+        indJZ = (matSt[:,id.j].==jj) .& (matSt[:,id.z].==zz)    # Auxiliary indicator
+        distr[indJZ] .= jMass[jj]*zMass[zz]/sum(indJZ)
+    end
+    # Productivity does not matter after retirement
+    for jj=jRet:n.j
+        indJ = (matSt[:,id.j].==jj)    # Auxiliary indicator
+        distr[indJ] .= jMass[jj]/sum(indJ)
+    end
+    # Comprobaciones
+    # jzMass = vcat([[sum(distr[(zz .∈ matSt[:,id.z]) .& (jj .∈ matSt[:,id.j])]) for zz in 1:n.z]' for jj in 1:n.j]...)
+    # @assert all(sum(jzMass[1:(jRet-1),:]./sum(jzMass[1:(jRet-1),:]),dims=1).≈zMass)
+    # @assert all(sum(jzMass,dims=2).≈jMass)
+
+    return distr
+end
+
 # Eigenvalues
 function dist(M::SparseMatrixCSC{Tr,Ti}, tol::Tr, maxiter::Ti
     )::Vector{Tr} where {Tr<:Real,Ti<:Integer}
@@ -301,32 +330,23 @@ function dist(M::SparseMatrixCSC{Tr,Ti}, tol::Tr, maxiter::Ti
 end
 
 # Iterative method
-function dist(Q_mat::SparseMatrixCSC{Tr,Ti}, tol::Tr,
-    eco::Economia, her::Herramientas)::Vector{Tr} where {Tr<:Real,Ti<:Integer}
-    @unpack jRet = eco
-    @unpack n, matSt, id = her
-
-    # Starting distribution
-        # Initialise distribution
-        distr = Vector{Tr}(undef,n.N)
-        dist1 = similar(distr)
-        # Number of possible states with same age
-        countT = vcat([count(jj .== matSt[:,id.j]) for jj in 1:n.j]...)
-        # Mass of agents in each age group
-        auxMass = 1.0/n.j
-        # Starting distribution: distribute agemass between all nodes with the same age
-        distr .= auxMass ./ countT[matSt[:, id.j]]
+function dist(distr0::Vector{Tr}, Q_mat::SparseMatrixCSC, tol::Tr, maxit::Ti
+              )::Vector{Tr} where {Tr<:Real, Ti<:Integer}
     # Stationary distribution
     tst = one(Tr)   # Initialise convergence criterion
-    while tst>tol
-        dist1 = Q_mat*distr
-        tst = maximum(abs.(dist1 - distr))
-        distr .= dist1
+    for iter=1:maxit
+        distr1 = Q_mat*distr0
+        tst = maximum(abs.(distr1 - distr0))
+        # If it converged
+        if tst<tol
+            println("Done with stationary distribution.")
+            return distr0
+            break
+        end
+        distr0 .= distr1
     end
-
-    println("Done with stationary distribution.")
-
-    return distr
+    # If the loop finished without converging
+    error("Distribution did not converge")
 end;
 
 
@@ -335,40 +355,53 @@ end;
 #### STEADY STATE COMPUTATION                                         ####
 ##########################################################################
 
+function guessV(eco::Economia{Tr,Ti}, her::Herramientas, sol::Solucion,
+    cfg::Configuracion)::Vector{Tr} where {Tr<:Real, Ti<:Integer}
+
+    @unpack β, γ = eco;
+    @unpack matSt, id, ind, mallaA = her;
+    @unpack inc_l, inc_a = sol;
+    @unpack c_min, penal = cfg;
+
+    # Guess for value function
+    v0 = 1/(1-β) * ((max.(c_min, inc_l + inc_a)).^(1-γ))/(1-γ)
+
+    # Penalty for negative assets when there is death risk
+    iPunish = ind.ret .& (matSt[:,id.a] .< id.a0)
+    v0[iPunish] = penal * (-mallaA[matSt[iPunish,id.a]]) 
+
+    return v0
+end
+
 function steady(eco::Economia, her::Herramientas, cfg::Configuracion;
     r_0::Tr=0.04)::Solucion where {Tr<:Real}
     
     @unpack β, α, δ, u′, a_min = eco;
-    @unpack n, mallaA, mallaZ, matSt, id = her;
+    @unpack n, mallaA, mallaZ, mallaζ, matSt, id = her;
     @unpack rlx_SGE, tol_SGE, maxit_SGE, c_min = cfg;
 
-    # Wage
-    w_0 = (one(Float64) - α) * (α / (r_0 + δ))^(α / (1.0 - α))
-
-    # Guess for policy functions
-    a_pol = mallaA[matSt[:,id.a]]
-    c_pol = max.(c_min, r_0*mallaA[matSt[:,id.a]] .+ w_0*mallaZ[matSt[:,id.z]])
-
     # We initialize the solution
-    sol = Solucion(r_0, w_0, eco, her, a_pol, c_pol, similar(c_pol), matSt[:,id.a], spzeros(Tr, Int64, n.N, n.N), fill(one(Tr)/n.N, n.N));
+    sol = Solucion(r_0, c_min, eco, her);
+    sol.value = guessV(eco,her,sol,cfg)     # Guess for value function (relevant for VFI and donation)
+
+    # Auxiliary variables
+    st_ζ = mallaζ[matSt[:,id.j]]
+    st_z = mallaZ[matSt[:,id.z]]
+    st_a = mallaA[matSt[:,id.a]]
 
     # Start of the dichotomy
     for kR = 1:maxit_SGE
-        # Prices
-        w_0 = (1 - α) * ((r_0 + δ) / α)^(α / (α - 1))
-        sol.r = r_0
-        sol.w = w_0
+        # Update prices
+        sol_update_r!(r_0, st_ζ, st_z, st_a, eco, sol)
         # Policy functions (Golden)
         hh_solve!(eco, her, sol, cfg)
         # Q-matrix
-        Q_mat = Q_matrix(sol, her)
+        sol.Q_mat = Q_matrix(sol, her)
         # Measure
-        distr = dist(Q_mat, cfg.tol_SSdis, eco, her)
+        sol_update_distr!(sol, cfg.tol_SSdis, cfg.maxit_SSdis, eco, her)
         # Aggregate quantities
-        @unpack a_pol, c_pol, value, apos_L = sol;
-        sol = Solucion(r_0, w_0, eco, her, a_pol, c_pol, value, apos_L, Q_mat, distr)
-        @unpack A_agg, K_agg, L_agg = sol
-
+        sol_update_agg!(sol)
+        @unpack A_agg, K_agg, L_agg = sol;
         # If it converged
         if abs(K_agg - A_agg) < tol_SGE
             # The dichotomoy has converged: we fill the solution structure
@@ -377,7 +410,6 @@ function steady(eco::Economia, her::Herramientas, cfg::Configuracion;
             return sol
             break
         end
-
         # If it did not converge yet
             # Implied r
             r_1 = α*(A_agg/L_agg)^(α-1) - δ

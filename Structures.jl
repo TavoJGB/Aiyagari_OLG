@@ -278,6 +278,22 @@ struct Economia{Tr<:Real, Ti<:Integer}
                               tol_check, c_min, penal,
                               doubBin, plotsiz, gridplotsiz)
     end;
+
+
+
+    ##########################################################################
+    #### INCOME CONSTRUCTORS                                              ####
+    ##########################################################################
+    
+    # Labour income
+    function gener_inc_l(w::Tr, st_ζ::Vector{Tr}, st_z::Vector{Tr})::Vector{Tr} where {Tr<:Real}
+        return w*st_ζ.*st_z
+    end
+    
+    # Capital income
+    function gener_inc_a(r::Tr, st_a::Vector{Tr})::Vector{Tr} where {Tr<:Real}
+        return r*st_a
+    end
     
     
     ##########################################################################
@@ -330,3 +346,60 @@ struct Economia{Tr<:Real, Ti<:Integer}
         # Construct the structure
         return Solucion(r, w, a_pol, c_pol, value, apos_L, inc_l, inc_a, A_agg, C_agg, K_agg, L_agg, Y_agg, Q_mat, distr, resid)
     end;
+
+    # Easy initialiser
+    function Solucion(r::Tr, c_min::Tr, eco::Economia, her::Herramientas)::Solucion where {Tr<:Real}
+        @unpack α, δ, jRet = eco;
+        @unpack mallaA, mallaZ, mallaζ, matSt, id, n, ind = her;
+    
+        # Guess distribution
+        distr = guessDist(jRet, her)
+    
+        # Other prices
+        w = (one(Tr) - α) * (α / (r + δ))^(α / (one(Tr) - α))
+    
+        # Guess for policy functions
+        a_pol = mallaA[matSt[:,id.a]]
+        c_pol = max.(c_min, r*mallaA[matSt[:,id.a]] .+ w*mallaZ[matSt[:,id.z]].*mallaζ[matSt[:,id.j]])
+        a_pos_L = matSt[:,id.a]
+    
+        # We initialize the solution
+        return Solucion(r, w, eco, her, a_pol, c_pol, similar(c_pol), a_pos_L, spzeros(Tr, Int64, n.N, n.N), distr);
+    end
+
+    # UPDATE SOLUTION
+        # Update r
+        function sol_update_r!( r_new::Tr, st_ζ::Vector{Tr}, st_z::Vector{Tr}, st_a::Vector{Tr},
+                                eco::Economia, sol::Solucion)::Nothing where {Tr<:Real}
+            @unpack α, δ = eco;
+            @unpack L_agg, distr = sol;
+            # Prices
+            sol.r = r_new
+            w_new = (1 - α) * ((r_new + δ) / α)^(α / (α - 1))
+            sol.w = w_new
+            # Income variables
+            sol.inc_l = gener_inc_l(w_new, st_ζ, st_z)
+            sol.inc_a = gener_inc_a(r_new, st_a)
+            # Producer
+            K_agg_new = L_agg * ((r_new + δ) / α)^(1.0 / (α - 1.0)) # aggregate capital
+            sol.K_agg = K_agg_new
+            sol.Y_agg = K_agg_new^α * L_agg^(1-α)
+            return nothing
+        end;
+        # Update aggregates
+        function sol_update_agg!(sol::Solucion)::Nothing where {Tr<:Real}
+            @unpack a_pol, c_pol, distr = sol
+            # Aggregates
+            sol.A_agg = sum(distr .* a_pol)     # savings
+            sol.C_agg = sum(distr .* c_pol)     # consumption
+            # Effective labour does not change (L_agg is constant)
+    
+            return nothing
+        end
+        # Update distribution
+        function sol_update_distr!(sol::Solucion, tol_SSdis::Tr, maxit_SSdis::Ti,
+            eco::Economia, her::Herramientas)::Nothing where {Tr<:Real, Ti<:Integer}
+            @unpack Q_mat, distr = sol;
+            sol.distr .= dist(distr, Q_mat, tol_SSdis, maxit_SSdis)
+            return nothing
+        end
